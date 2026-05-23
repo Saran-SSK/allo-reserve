@@ -294,8 +294,8 @@ npm install
 Create a `.env` file in the root directory:
 
 ```env
-DATABASE_URL=your_supabase_pooled_connection_url
-DIRECT_URL=your_supabase_direct_connection_url
+DATABASE_URL= postgresql://postgres.gszlnobxalhuiqpmwfgh:abs34hfgt4fds@aws-1-ap-southeast-2.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1
+DIRECT_URL= postgresql://postgres:abs34hfgt4fds@db.gszlnobxalhuiqpmwfgh.supabase.co:5432/postgres
 ```
 
 The project uses:
