@@ -34,7 +34,7 @@ https://github.com/Saran-SSK/allo-reserve
 
 ## Reservation Lifecycle System
 
-The platform supports a complete reservation workflow:
+The platform supports a complete reservation workflow.
 
 ### Reservation Creation
 
@@ -56,7 +56,7 @@ Expired reservations:
 
 * are detected automatically
 * change status to expired
-* release reserved stock back to available inventory
+* release reserved stock back into available inventory
 * update inventory counts dynamically
 
 This simulates real-world inventory reservation systems used in logistics and e-commerce platforms.
@@ -69,12 +69,12 @@ One of the core engineering goals of this project was preventing overbooking dur
 
 Implemented safeguards include:
 
-* Atomic inventory updates
-* Stock validation before reservation creation
-* Prevention of negative inventory values
-* Consistent reservation state management
-* Real-time inventory synchronization
-* Safe handling of simultaneous reservation requests
+* atomic inventory updates
+* stock validation before reservation creation
+* prevention of negative inventory values
+* consistent reservation state management
+* real-time inventory synchronization
+* safe handling of simultaneous reservation requests
 
 This ensures stock consistency even when multiple users attempt to reserve the same product concurrently from different devices or sessions.
 
@@ -86,20 +86,20 @@ The application includes a fully responsive enterprise-style dashboard.
 
 Features:
 
-* Mobile-first responsive layouts
-* Adaptive inventory cards
-* Responsive sidebar navigation
-* Mobile-friendly dialogs
-* Tablet optimization
-* Desktop dashboard layout
-* Responsive reservation panels
+* mobile-first responsive layouts
+* adaptive inventory cards
+* responsive sidebar navigation
+* mobile-friendly dialogs
+* tablet optimization
+* desktop dashboard layout
+* responsive reservation panels
 
 The UI was designed to provide a consistent experience across:
 
-* Phones
-* Tablets
-* Laptops
-* Large desktop screens
+* phones
+* tablets
+* laptops
+* large desktop screens
 
 ---
 
@@ -118,12 +118,12 @@ The UI was designed to provide a consistent experience across:
 
 Modern toast notifications are used for:
 
-* Product creation
-* Inventory updates
-* Reservation success/failure
-* Reservation confirmations
-* Release actions
-* Error handling
+* product creation
+* inventory updates
+* reservation success/failure
+* reservation confirmations
+* release actions
+* error handling
 
 ---
 
@@ -131,9 +131,9 @@ Modern toast notifications are used for:
 
 Custom confirmation dialogs were implemented for:
 
-* Product deletion
-* Reservation release
-* Reservation confirmation
+* product deletion
+* reservation release
+* reservation confirmation
 
 This prevents accidental destructive actions.
 
@@ -143,10 +143,10 @@ This prevents accidental destructive actions.
 
 The system supports:
 
-* Multiple warehouses
-* Warehouse-based inventory grouping
-* Inventory distribution visibility
-* Warehouse-level stock tracking
+* multiple warehouses
+* warehouse-based inventory grouping
+* inventory distribution visibility
+* warehouse-level stock tracking
 
 ---
 
@@ -216,6 +216,8 @@ Core entities:
 
 The schema is designed to maintain inventory consistency while supporting reservation workflows and concurrent operations.
 
+PostgreSQL was chosen because the project requires strong transactional consistency and reliable concurrent inventory updates. Relational constraints and transactional operations are important for preventing stock inconsistencies during simultaneous reservation attempts.
+
 ---
 
 # API Endpoints
@@ -250,33 +252,36 @@ The schema is designed to maintain inventory consistency while supporting reserv
 * Component-based frontend design
 * API-driven reservation workflows
 
+Prisma ORM was used to provide type-safe database access, simplified schema management, and safer transactional operations during reservation workflows.
+
 ---
 
 ## Scalability Considerations
 
 The architecture was structured to support:
 
-* Additional warehouses
-* Increased product inventory
-* Larger reservation workloads
-* Authentication integration
-* Role-based access control
-* Real-time synchronization
-* Analytics dashboards
+* additional warehouses
+* increased product inventory
+* larger reservation workloads
+* authentication integration
+* role-based access control
+* real-time synchronization
+* analytics dashboards
 
 ---
 
-# Local Setup
+# Running the Application Locally
 
-## Clone Repository
+## 1. Clone the Repository
 
 ```bash
 git clone https://github.com/Saran-SSK/allo-reserve.git
+cd allo-reserve
 ```
 
 ---
 
-## Install Dependencies
+## 2. Install Dependencies
 
 ```bash
 npm install
@@ -284,18 +289,23 @@ npm install
 
 ---
 
-## Configure Environment Variables
+## 3. Configure Environment Variables
 
-Create a `.env` file:
+Create a `.env` file in the root directory:
 
 ```env
-DATABASE_URL=your_database_url
-DIRECT_URL=your_direct_database_url
+DATABASE_URL=your_supabase_pooled_connection_url
+DIRECT_URL=your_supabase_direct_connection_url
 ```
+
+The project uses:
+
+* `DATABASE_URL` for pooled runtime connections
+* `DIRECT_URL` for Prisma schema operations and migrations
 
 ---
 
-## Push Prisma Schema
+## 4. Push Prisma Schema
 
 ```bash
 npx prisma db push
@@ -303,11 +313,173 @@ npx prisma db push
 
 ---
 
-## Start Development Server
+## 5. Seed Initial Data
+
+```bash
+npx prisma db seed
+```
+
+This populates:
+
+* warehouses
+* products
+* inventory records
+* sample reservations
+
+---
+
+## 6. Start Development Server
 
 ```bash
 npm run dev
 ```
+
+The application will run on:
+
+```bash
+http://localhost:3000
+```
+
+---
+
+# Reservation Expiry Mechanism
+
+The application implements an automated reservation expiry workflow.
+
+## How It Works
+
+Each reservation contains:
+
+* status
+* createdAt
+* expiresAt
+
+A periodic expiry process runs through:
+
+```bash
+/api/reservations/expire
+```
+
+The workflow:
+
+1. Finds reservations whose `expiresAt` timestamp has passed
+2. Marks them as `expired`
+3. Releases reserved stock back into available inventory
+4. Updates inventory counts atomically
+
+This ensures:
+
+* stale reservations do not permanently lock inventory
+* stock remains consistent
+* inventory values stay synchronized
+
+The expiry route is triggered periodically from the frontend to simulate background reservation cleanup in a serverless deployment environment.
+
+In a production-scale architecture, this would typically be replaced with:
+
+* scheduled cron jobs
+* queue workers
+* background processing services
+
+---
+
+# Trade-offs & Future Improvements
+
+## Trade-offs Made
+
+### Polling-Based Expiry Handling
+
+The expiry mechanism currently uses periodic polling from the frontend.
+
+Reason:
+
+* simpler deployment architecture
+* easier serverless compatibility
+* faster implementation within assignment scope
+
+Trade-off:
+
+* increased API calls
+* less efficient than dedicated background workers
+
+---
+
+### Serverless Architecture
+
+The application uses:
+
+* Vercel serverless functions
+* Prisma ORM
+* Supabase PostgreSQL
+
+This provides:
+
+* fast deployment
+* simplified infrastructure
+* scalable API architecture
+
+Trade-off:
+
+* occasional cold-start latency on free-tier infrastructure
+
+---
+
+### Simplified Authentication
+
+Authentication and RBAC were intentionally excluded to focus on:
+
+* inventory consistency
+* reservation workflows
+* concurrency handling
+* backend correctness
+
+---
+
+## What I Would Improve With More Time
+
+Given additional time, I would implement:
+
+* authentication & role-based access control
+* real-time WebSocket inventory synchronization
+* background job queues for reservation expiry
+* audit logging for inventory changes
+* advanced warehouse analytics
+* reservation history tracking
+* pagination and server-side filtering
+* automated testing suite
+* optimistic UI updates
+* performance optimizations for high-frequency polling
+* multi-user collaboration features
+
+---
+
+# Concurrency & Data Consistency
+
+A major focus of this project was preventing race conditions during simultaneous reservation attempts.
+
+The reservation workflow includes:
+
+* stock validation before reservation creation
+* atomic inventory updates
+* prevention of negative inventory states
+* synchronized reservation status handling
+
+This ensures the system remains consistent even under concurrent reservation requests from multiple users or devices.
+
+---
+
+# Engineering Focus
+
+The primary focus of this project was backend correctness and inventory consistency under concurrent reservation workflows.
+
+Special attention was given to:
+
+* preventing race conditions
+* maintaining inventory integrity
+* handling reservation lifecycle transitions safely
+* designing a scalable and maintainable project structure
+
+The system was intentionally structured to resemble real-world inventory reservation workflows used in production SaaS platforms.
 
 ---
 
@@ -315,13 +487,13 @@ npm run dev
 
 Potential future enhancements:
 
-* Authentication & RBAC
-* Real-time WebSocket updates
-* Inventory analytics
-* Audit logs
-* Advanced warehouse operations
-* Reservation history tracking
-* Multi-user collaboration
+* authentication & RBAC
+* real-time WebSocket updates
+* inventory analytics
+* audit logs
+* advanced warehouse operations
+* reservation history tracking
+* multi-user collaboration
 * AI-based inventory forecasting
 
 ---
