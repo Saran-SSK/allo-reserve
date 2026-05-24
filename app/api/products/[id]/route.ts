@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { prisma } from '@/lib/prisma'
+
+const p = prisma as any
 
 export async function DELETE(
   request: Request,
@@ -15,7 +17,7 @@ export async function DELETE(
       )
     }
 
-    const product = await prisma.product.findUnique({
+    const product = await p.product.findUnique({
       where: { id: productId },
       include: {
         inventory: {
@@ -31,10 +33,10 @@ export async function DELETE(
       )
     }
 
-    const inventoryIds = product.inventory.map((inventory) => inventory.id)
+    const inventoryIds = (product.inventory as { id: string }[]).map((inventory) => inventory.id)
 
     if (inventoryIds.length > 0) {
-      const activeReservationCount = await prisma.reservation.count({
+      const activeReservationCount = await p.reservation.count({
         where: {
           inventoryId: { in: inventoryIds },
           status: {
@@ -54,26 +56,29 @@ export async function DELETE(
       }
     }
 
-    await prisma.$transaction([
-      prisma.reservation.deleteMany({
-        where: {
-          inventoryId: { in: inventoryIds },
-          status: {
-            in: ['RELEASED', 'EXPIRED'],
+    await p.$transaction(
+      [
+        p.reservation.deleteMany({
+          where: {
+            inventoryId: { in: inventoryIds },
+            status: {
+              in: ['RELEASED', 'EXPIRED'],
+            },
           },
-        },
-      }),
-      prisma.inventory.deleteMany({
-        where: {
-          productId,
-        },
-      }),
-      prisma.product.delete({
-        where: {
-          id: productId,
-        },
-      }),
-    ])
+        }),
+        p.inventory.deleteMany({
+          where: {
+            productId,
+          },
+        }),
+        p.product.delete({
+          where: {
+            id: productId,
+          },
+        }),
+      ],
+      { timeout: 10000 }
+    )
 
     return NextResponse.json({
       success: true,
@@ -125,7 +130,7 @@ export async function PATCH(
       )
     }
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await p.$transaction(async (tx: any) => {
       const product = await tx.product.findUnique({
         where: { id: productId },
       })
@@ -186,7 +191,7 @@ export async function PATCH(
         updatedInventory,
         warehouse,
       }
-    })
+    }, { timeout: 10000 })
 
     return NextResponse.json({
       id: result.updatedProduct.id,

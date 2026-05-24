@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { prisma } from '@/lib/prisma'
+
+const p = prisma as any
 
 export async function GET() {
   try {
-    const reservations = await prisma.reservation.findMany({
+    const reservations = await p.reservation.findMany({
       where: {
         status: {
           in: ['PENDING', 'CONFIRMED'],
@@ -22,7 +24,7 @@ export async function GET() {
       },
     })
 
-    const formattedReservations = reservations.map((reservation) => ({
+    const formattedReservations = (reservations as any[]).map((reservation: any) => ({
       id: reservation.id,
       productId: reservation.inventory.product.id,
       productName: reservation.inventory.product.name,
@@ -62,7 +64,7 @@ export async function POST(request: Request) {
 
     const { inventoryId, quantity } = body
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await p.$transaction(async (tx: any) => {
       const inventories = await tx.$queryRaw<
         { id: string; totalStock: number; reservedStock: number }[]
       >`
@@ -103,7 +105,7 @@ export async function POST(request: Request) {
       })
 
       return { reservation, updatedInventory }
-    })
+    }, { timeout: 10000 })
 
     if (result && 'insufficientStock' in result) {
       return NextResponse.json(

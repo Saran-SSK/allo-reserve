@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
+
+const p = prisma as any
 
 export async function POST(
   request: Request,
@@ -16,68 +18,61 @@ export async function POST(
       );
     }
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await p.$transaction(async (tx: any) => {
       const reservation = await tx.reservation.findUnique({
-        where: {
-          id: reservationId,
-        },
-      });
+        where: { id: reservationId },
+      })
 
       if (!reservation) {
-        return {
-          error: "Reservation not found.",
-          status: 404,
-        };
+        return { error: 'Reservation not found.', status: 404 }
       }
 
-      if (reservation.status === "RELEASED") {
-        return {
-          error: "Reservation already released.",
-          status: 400,
-        };
+      if (reservation.status === 'RELEASED') {
+        return { error: 'Reservation already released.', status: 400 }
       }
 
-      const inventory = await tx.inventory.findUnique({
-        where: {
-          id: reservation.inventoryId,
-        },
-      });
+      // Lock inventory for update
+      const inventories = await tx.$queryRaw<
+        { id: string; totalStock: number; reservedStock: number }[]
+      >`
+        SELECT "id", "totalStock", "reservedStock"
+        FROM "Inventory"
+        WHERE "id" = ${reservation.inventoryId}
+        FOR UPDATE
+      `
+
+      const inventory = inventories[0]
 
       if (!inventory) {
-        return {
-          error: "Associated inventory not found.",
-          status: 404,
-        };
+        return { error: 'Associated inventory not found.', status: 404 }
       }
 
-      const updatedReservedStock = Math.max(
-        0,
-        inventory.reservedStock - reservation.quantity
-      );
+      // If pending: release reserved stock back to available (decrement reserved)
+      // If confirmed: the reservation already consumed totalStock on confirm,
+      // so releasing a confirmed reservation should restore totalStock.
+      if (reservation.status === 'PENDING') {
+        const updatedReservedStock = Math.max(0, inventory.reservedStock - reservation.quantity)
 
-      await tx.inventory.update({
-        where: {
-          id: inventory.id,
-        },
-        data: {
-          reservedStock: updatedReservedStock,
-        },
-      });
+        await tx.inventory.update({
+          where: { id: inventory.id },
+          data: { reservedStock: updatedReservedStock },
+        })
+      } else if (reservation.status === 'CONFIRMED') {
+        const updatedTotalStock = inventory.totalStock + reservation.quantity
+
+        await tx.inventory.update({
+          where: { id: inventory.id },
+          data: { totalStock: updatedTotalStock },
+        })
+      }
 
       const updatedReservation = await tx.reservation.update({
-        where: {
-          id: reservationId,
-        },
-        data: {
-          status: "RELEASED",
-        },
-      });
+        where: { id: reservationId },
+        data: { status: 'RELEASED' },
+      })
 
-      return {
-        data: updatedReservation,
-        status: 200,
-      };
-    });
+      return { data: updatedReservation, status: 200 }
+    }, { timeout: 10000 })
 
     if ("error" in result) {
       return NextResponse.json(

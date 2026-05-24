@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { InventoryCard } from '@/components/inventory-card'
 import { ReservationPanel } from '@/components/reservation-panel'
@@ -48,360 +48,401 @@ export function InventoryDashboard({
   setInventory,
   setReservations,
 }: InventoryDashboardProps) {
-  const [inventory, setInventoryState] = useState<
-    InventoryItem[]
-  >([])
+  const [inventory, setInventoryState] = useState<InventoryItem[]>([])
+  const [reservations, setReservationsState] = useState<Reservation[]>([])
+  const [loading, setLoading] = useState(true)
+  const [actionPending, setActionPending] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null)
 
-  const [
-    reservations,
-    setReservationsState,
-  ] = useState<Reservation[]>([])
+  const normalizeInventory = (data: ProductResponse[]) =>
+    data.flatMap((product) =>
+      product.inventories.map((inv) => ({
+        id: inv.inventoryId,
+        productId: product.id,
+        productName: product.name,
+        warehouseId: inv.warehouseId,
+        warehouseName: inv.warehouseName,
+        totalStock: inv.totalStock,
+        reservedStock: inv.reservedStock,
+        availableStock: inv.totalStock - inv.reservedStock,
+        lowStockThreshold: Math.max(1, Math.round(inv.totalStock * 0.1)),
+      }))
+    )
 
-  const [loading, setLoading] =
-    useState(true)
+  const normalizeReservations = (data: ReservationResponse[]) =>
+    data
+      .filter((reservation) => reservation.status === 'pending')
+      .map((reservation) => ({
+        id: reservation.id,
+        productId: reservation.productId,
+        productName: reservation.productName,
+        warehouseName: reservation.warehouseName,
+        quantity: reservation.quantity,
+        status: reservation.status,
+        expiresAt: new Date(reservation.expiresAt),
+        createdAt: new Date(reservation.createdAt),
+      }))
 
-  const [editOpen, setEditOpen] =
-    useState(false)
-
-  const [editingItem, setEditingItem] =
-    useState<InventoryItem | null>(null)
-
-  const fetchInventory = async () => {
-    try {
-      const response = await fetch(
-        '/api/products'
-      )
-
-      const data = (await response.json()) as ProductResponse[]
-
-      const formattedInventory: InventoryItem[] =
-        data.flatMap((product) =>
-          product.inventories.map(
-            (inv) => ({
-              id: inv.inventoryId,
-              productId: product.id,
-              productName: product.name,
-              warehouseId: inv.warehouseId,
-              warehouseName:
-                inv.warehouseName,
-              totalStock: inv.totalStock,
-              reservedStock:
-                inv.reservedStock,
-              availableStock:
-                inv.availableStock,
-
-              lowStockThreshold:
-                Math.max(
-                  1,
-                  Math.round(
-                    inv.totalStock * 0.1
-                  )
-                ),
-            })
-          )
-        )
-
-      setInventoryState(
-        formattedInventory
-      )
-
-      setInventory(formattedInventory)
-    } catch (error) {
-      console.error(
-        'Failed to fetch inventory:',
-        error
-      )
-    }
+  const updateInventoryState = (items: InventoryItem[]) => {
+    setInventoryState(items)
+    setInventory(items)
   }
 
-  const fetchReservations = async () => {
-    try {
-      const response = await fetch(
-        '/api/reservations'
-      )
-
-      const data = (await response.json()) as ReservationResponse[]
-
-      const formattedReservations: Reservation[] =
-        data
-          .filter(
-            (reservation) =>
-              reservation.status ===
-                'pending' ||
-              reservation.status ===
-                'confirmed'
-          )
-          .map((reservation) => ({
-            id: reservation.id,
-            productId:
-              reservation.productId,
-            productName:
-              reservation.productName,
-            warehouseName:
-              reservation.warehouseName,
-            quantity:
-              reservation.quantity,
-            status: reservation.status,
-            expiresAt: new Date(
-              reservation.expiresAt
-            ),
-            createdAt: new Date(
-              reservation.createdAt
-            ),
-          }))
-
-      setReservationsState(
-        formattedReservations
-      )
-
-      setReservations(
-        formattedReservations
-      )
-    } catch (error) {
-      console.error(
-        'Failed to fetch reservations:',
-        error
-      )
-    }
+  const updateReservationsState = (items: Reservation[]) => {
+    setReservationsState(items)
+    setReservations(items)
   }
 
-  const expireReservations =
-    async () => {
-      try {
-        await fetch(
-          '/api/reservations/expire',
-          {
-            method: 'POST',
-          }
-        )
-      } catch (error) {
-        console.error(
-          'Failed to expire reservations:',
-          error
-        )
+  const loadServerState = async () => {
+    const [inventoryResponse, reservationResponse] = await Promise.all([
+      fetch('/api/products'),
+      fetch('/api/reservations'),
+    ])
+
+    if (!inventoryResponse.ok || !reservationResponse.ok) {
+      const inventoryBody = await inventoryResponse.json().catch(() => null)
+      const reservationBody = await reservationResponse.json().catch(() => null)
+      console.error('Failed to load server data', {
+        inventoryBody,
+        reservationBody,
+      })
+      return
+    }
+
+    const inventoryData = (await inventoryResponse.json()) as ProductResponse[]
+    const reservationData = (await reservationResponse.json()) as ReservationResponse[]
+
+    updateInventoryState(normalizeInventory(inventoryData))
+    updateReservationsState(normalizeReservations(reservationData))
+  }
+
+  const expireReservations = async () => {
+    try {
+      const response = await fetch('/api/reservations/expire', {
+        method: 'POST',
+      })
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => null)
+        console.error('Expire reservations request failed', errorBody)
+        return
       }
+
+      const data = await response.json()
+
+      if (typeof data.expiredCount === 'number' && data.expiredCount > 0) {
+        await loadServerState()
+      }
+    } catch (error) {
+      console.error('Failed to expire reservations:', error)
     }
+  }
 
   useEffect(() => {
     const loadData = async () => {
-      await expireReservations()
-
-      await Promise.all([
-        fetchInventory(),
-        fetchReservations(),
-      ])
-
-      setLoading(false)
+      try {
+        await expireReservations()
+        await loadServerState()
+      } finally {
+        setLoading(false)
+      }
     }
 
     loadData()
-
-    const interval = setInterval(
-      async () => {
-        await expireReservations()
-
-        await Promise.all([
-          fetchInventory(),
-          fetchReservations(),
-        ])
-      },
-      15000
-    )
-
-    return () =>
-      clearInterval(interval)
   }, [])
 
-  const handleReserve = async (
-    item: InventoryItem
-  ) => {
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      expireReservations()
+    }, 60000)
+
+    return () => window.clearInterval(interval)
+  }, [])
+
+  const handleReserve = async (item: InventoryItem) => {
+    if (actionPending) return
+
+    const originalInventory = inventory
+    const originalReservations = reservations
+
+    const updatedInventory = inventory.map((current) =>
+      current.id === item.id
+        ? {
+            ...current,
+            reservedStock: current.reservedStock + 1,
+            availableStock: current.availableStock - 1,
+          }
+        : current
+    )
+
+    const optimisticReservation: Reservation = {
+      id: `temp-${item.id}-${Date.now()}`,
+      productId: item.productId,
+      productName: item.productName,
+      warehouseName: item.warehouseName,
+      quantity: 1,
+      status: 'pending',
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      createdAt: new Date(),
+    }
+
+    const optimisticReservations = [optimisticReservation, ...reservations]
+
+    updateInventoryState(updatedInventory)
+    updateReservationsState(optimisticReservations)
+    setActionPending(true)
+
     try {
-      const response = await fetch(
-        '/api/reservations',
-        {
-          method: 'POST',
+      const response = await fetch('/api/reservations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          inventoryId: item.id,
+          quantity: 1,
+        }),
+      })
 
-          headers: {
-            'Content-Type':
-              'application/json',
-          },
-
-          body: JSON.stringify({
-            inventoryId: item.id,
-            quantity: 1,
-          }),
-        }
-      )
-
-      const data =
-        await response.json()
+      const data = await response.json()
 
       if (!response.ok) {
-        toast.error(
-          data.error ||
-            'Reservation failed'
-        )
-
-        return
+        throw data
       }
 
-      await Promise.all([
-        fetchInventory(),
-        fetchReservations(),
-      ])
+      const confirmedReservation: Reservation = {
+        ...optimisticReservation,
+        id: data.id,
+        expiresAt: new Date(data.expiresAt),
+        createdAt: new Date(data.createdAt),
+      }
 
-      toast.success(
-        'Reservation created successfully'
+      const nextReservations = optimisticReservations.map((reservation) =>
+        reservation.id === optimisticReservation.id
+          ? confirmedReservation
+          : reservation
       )
-    } catch (error) {
-      console.error(error)
 
+      updateReservationsState(nextReservations)
+      toast.success('Reservation created successfully')
+    } catch (error) {
+      updateInventoryState(originalInventory)
+      updateReservationsState(originalReservations)
+      console.error('Reservation failed:', error)
       toast.error(
-        'Reservation failed'
+        (error && typeof error === 'object' && 'error' in error
+          ? (error as any).error
+          : 'Reservation failed') as string
       )
+      await loadServerState()
+    } finally {
+      setActionPending(false)
     }
   }
 
-  const handleDelete = async (
-    productId: string
-  ) => {
-    try {
-      const response = await fetch(
-        `/api/products/${productId}`,
-        {
-          method: 'DELETE',
-        }
-      )
+  const handleDelete = async (productId: string) => {
+    if (actionPending) return
 
-      const data =
-        await response.json()
+    const originalInventory = inventory
+    const originalReservations = reservations
+    const filteredInventory = inventory.filter(
+      (item) => item.productId !== productId
+    )
+    const filteredReservations = reservations.filter(
+      (reservation) => reservation.productId !== productId
+    )
+
+    updateInventoryState(filteredInventory)
+    updateReservationsState(filteredReservations)
+    setActionPending(true)
+
+    try {
+      const response = await fetch(`/api/products/${productId}`, {
+        method: 'DELETE',
+      })
+
+      const data = await response.json()
 
       if (!response.ok) {
-        toast.error(
-          data.error ||
-            'Delete failed'
-        )
-
-        return
+        throw data
       }
 
-      await Promise.all([
-        fetchInventory(),
-        fetchReservations(),
-      ])
-
-      toast.success(
-        'Product deleted successfully'
-      )
+      toast.success('Product deleted successfully')
     } catch (error) {
-      console.error(error)
-
-      toast.error('Delete failed')
+      updateInventoryState(originalInventory)
+      updateReservationsState(originalReservations)
+      console.error('Delete failed:', error)
+      toast.error(
+        (error && typeof error === 'object' && 'error' in error
+          ? (error as any).error
+          : 'Delete failed') as string
+      )
+      await loadServerState()
+    } finally {
+      setActionPending(false)
     }
   }
 
-  const handleEdit = (
-    item: InventoryItem
-  ) => {
+  const handleEdit = (item: InventoryItem) => {
     setEditingItem(item)
     setEditOpen(true)
   }
 
-  const handleEditSaved =
-    async () => {
-      await Promise.all([
-        fetchInventory(),
-        fetchReservations(),
-      ])
-
+  const handleEditSaved = async () => {
+    setActionPending(true)
+    try {
+      await loadServerState()
+    } finally {
+      setActionPending(false)
       setEditOpen(false)
-
       setEditingItem(null)
     }
+  }
 
-  const handleConfirm = async (
-    id: string
-  ) => {
-    try {
-      const response = await fetch(
-        `/api/reservations/${id}/confirm`,
-        {
-          method: 'POST',
-        }
-      )
+  const handleConfirm = async (id: string) => {
+    if (actionPending) return
 
-      const data =
-        await response.json()
+    const reservation = reservations.find((item) => item.id === id)
 
-      if (!response.ok) {
-        toast.error(
-          data.error ||
-            'Confirmation failed'
-        )
+    if (!reservation) {
+      return
+    }
 
-        return
+    const originalInventory = inventory
+    const originalReservations = reservations
+    const updatedReservations = reservations.filter((item) => item.id !== id)
+    const updatedInventory = inventory.map((item) => {
+      if (
+        item.productId !== reservation.productId ||
+        item.warehouseName !== reservation.warehouseName
+      ) {
+        return item
       }
 
-      await Promise.all([
-        fetchInventory(),
-        fetchReservations(),
-      ])
+      const reservedStock = Math.max(0, item.reservedStock - reservation.quantity)
+      const totalStock = Math.max(0, item.totalStock - reservation.quantity)
 
-      toast.success(
-        'Reservation confirmed'
-      )
+      return {
+        ...item,
+        reservedStock,
+        totalStock,
+        availableStock: Math.max(0, totalStock - reservedStock),
+      }
+    })
+
+    updateInventoryState(updatedInventory)
+    updateReservationsState(updatedReservations)
+    setActionPending(true)
+
+    try {
+      const response = await fetch(`/api/reservations/${id}/confirm`, {
+        method: 'POST',
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw data
+      }
+
+      toast.success('Reservation confirmed')
     } catch (error) {
-      console.error(error)
-
+      updateInventoryState(originalInventory)
+      updateReservationsState(originalReservations)
+      console.error('Confirmation failed:', error)
       toast.error(
-        'Confirmation failed'
+        (error && typeof error === 'object' && 'error' in error
+          ? (error as any).error
+          : 'Confirmation failed') as string
       )
+      await loadServerState()
+    } finally {
+      setActionPending(false)
     }
   }
 
-  const handleRelease = async (
-    id: string
-  ) => {
-    try {
-      const response = await fetch(
-        `/api/reservations/${id}/release`,
-        {
-          method: 'POST',
-        }
-      )
+  const handleRelease = async (id: string) => {
+    if (actionPending) return
 
-      const data =
-        await response.json()
+    const reservation = reservations.find((item) => item.id === id)
 
-      if (!response.ok) {
-        toast.error(
-          data.error ||
-            'Release failed'
-        )
+    if (!reservation) {
+      return
+    }
 
-        return
+    const originalInventory = inventory
+    const originalReservations = reservations
+    const updatedReservations = reservations.filter((item) => item.id !== id)
+    const updatedInventory = inventory.map((item) => {
+      if (
+        item.productId !== reservation.productId ||
+        item.warehouseName !== reservation.warehouseName
+      ) {
+        return item
       }
 
-      await Promise.all([
-        fetchInventory(),
-        fetchReservations(),
-      ])
+      const reservedStock = Math.max(0, item.reservedStock - reservation.quantity)
 
-      toast.success(
-        'Reservation released'
-      )
+      return {
+        ...item,
+        reservedStock,
+        availableStock: Math.max(0, item.totalStock - reservedStock),
+      }
+    })
+
+    updateInventoryState(updatedInventory)
+    updateReservationsState(updatedReservations)
+    setActionPending(true)
+
+    try {
+      const response = await fetch(`/api/reservations/${id}/release`, {
+        method: 'POST',
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw data
+      }
+
+      toast.success('Reservation released')
     } catch (error) {
-      console.error(error)
-
+      updateInventoryState(originalInventory)
+      updateReservationsState(originalReservations)
+      console.error('Release failed:', error)
       toast.error(
-        'Release failed'
+        (error && typeof error === 'object' && 'error' in error
+          ? (error as any).error
+          : 'Release failed') as string
       )
+      await loadServerState()
+    } finally {
+      setActionPending(false)
     }
   }
+
+  const filteredInventory = useMemo(() => {
+    const term = search.toLowerCase()
+    return inventory.filter(
+      (item) =>
+        item.productName.toLowerCase().includes(term) ||
+        item.warehouseName.toLowerCase().includes(term)
+    )
+  }, [inventory, search])
+
+  const filteredReservations = useMemo(() => {
+    const term = search.toLowerCase()
+    return reservations.filter(
+      (reservation) =>
+        reservation.productName.toLowerCase().includes(term) ||
+        reservation.warehouseName.toLowerCase().includes(term)
+    )
+  }, [reservations, search])
 
   if (loading) {
     return (
-    <div className="space-y-4">
+      <div className="space-y-4">
         <div className="h-32 animate-pulse rounded-2xl bg-muted" />
         <div className="h-32 animate-pulse rounded-2xl bg-muted" />
         <div className="h-32 animate-pulse rounded-2xl bg-muted" />
@@ -419,44 +460,21 @@ export function InventoryDashboard({
             </h2>
 
             <p className="text-sm text-muted-foreground">
-              {inventory.length}{' '}
-              inventory records
+              {inventory.length} inventory records
             </p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
-          {inventory
-            .filter((item) => {
-              const searchTerm =
-                search.toLowerCase()
-
-              return (
-                item.productName
-                  .toLowerCase()
-                  .includes(
-                    searchTerm
-                  ) ||
-                item.warehouseName
-                  .toLowerCase()
-                  .includes(
-                    searchTerm
-                  )
-              )
-            })
-            .map((item) => (
-              <InventoryCard
-                key={item.id}
-                item={item}
-                onReserve={
-                  handleReserve
-                }
-                onEdit={handleEdit}
-                onDelete={
-                  handleDelete
-                }
-              />
-            ))}
+          {filteredInventory.map((item) => (
+            <InventoryCard
+              key={item.id}
+              item={item}
+              onReserve={handleReserve}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+            />
+          ))}
         </div>
 
         <EditProductDialog
@@ -475,25 +493,7 @@ export function InventoryDashboard({
 
       <div className="min-w-0 xl:sticky xl:top-24 xl:self-start">
         <ReservationPanel
-          reservations={reservations.filter(
-            (reservation) => {
-              const searchTerm =
-                search.toLowerCase()
-
-              return (
-                reservation.productName
-                  .toLowerCase()
-                  .includes(
-                    searchTerm
-                  ) ||
-                reservation.warehouseName
-                  .toLowerCase()
-                  .includes(
-                    searchTerm
-                  )
-              )
-            }
-          )}
+          reservations={filteredReservations}
           onConfirm={handleConfirm}
           onRelease={handleRelease}
           loading={loading}

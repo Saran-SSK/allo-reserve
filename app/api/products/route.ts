@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { prisma } from '@/lib/prisma'
+
+const p = prisma as any
 
 export async function GET() {
   try {
-    const products = await prisma.product.findMany({
+    const products = await p.product.findMany({
       include: {
         inventory: {
           include: {
@@ -13,10 +15,10 @@ export async function GET() {
       },
     })
 
-    const responsePayload = products.map((product) => ({
+    const responsePayload = (products as any[]).map((product: any) => ({
       id: product.id,
       name: product.name,
-      inventories: product.inventory.map((inventory) => ({
+      inventories: (product.inventory as any[]).map((inventory: any) => ({
         inventoryId: inventory.id,
         warehouseId: inventory.warehouseId,
         warehouseName: inventory.warehouse.name,
@@ -50,38 +52,42 @@ export async function POST(request: Request) {
       )
     }
 
-    let warehouse = await prisma.warehouse.findFirst({
-      where: {
-        name: warehouseName,
-      },
-    })
-
-    if (!warehouse) {
-      warehouse = await prisma.warehouse.create({
-        data: {
+    const result = await p.$transaction(async (tx: any) => {
+      let warehouse = await tx.warehouse.findFirst({
+        where: {
           name: warehouseName,
         },
       })
-    }
 
-    const product = await prisma.product.create({
-      data: {
-        name,
-      },
-    })
+      if (!warehouse) {
+        warehouse = await tx.warehouse.create({
+          data: {
+            name: warehouseName,
+          },
+        })
+      }
 
-    const inventory = await prisma.inventory.create({
-      data: {
-        productId: product.id,
-        warehouseId: warehouse.id,
-        totalStock: stock,
-        reservedStock: 0,
-      },
-    })
+      const product = await tx.product.create({
+        data: {
+          name,
+        },
+      })
+
+      const inventory = await tx.inventory.create({
+        data: {
+          productId: product.id,
+          warehouseId: warehouse.id,
+          totalStock: stock,
+          reservedStock: 0,
+        },
+      })
+
+      return { product, inventory }
+    }, { timeout: 10000 })
 
     return NextResponse.json({
-      product,
-      inventory,
+      product: result.product,
+      inventory: result.inventory,
     })
   } catch (error) {
     console.error(error)

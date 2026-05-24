@@ -121,7 +121,9 @@ function ReservationItem({
           </div>
           <p className="break-words text-xs text-muted-foreground">{reservation.productName}</p>
         </div>
-        <CountdownTimer expiresAt={reservation.expiresAt} />
+        {reservation.status === 'pending' && (
+          <CountdownTimer expiresAt={reservation.expiresAt} />
+        )}
       </div>
       
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -245,11 +247,7 @@ function ReservationItem({
 }
 
 export function ReservationPanel({ reservations, onConfirm, onRelease, loading = false }: ReservationPanelProps) {
-  const activeReservations = reservations.filter(
-  (r) =>
-    r.status.toLowerCase() === 'pending' ||
-    r.status.toLowerCase() === 'confirmed'
-)
+  const activeReservations = reservations.filter((r) => r.status === 'pending')
 
   return (
     <Card className="h-fit rounded-2xl border border-border bg-card shadow-sm">
