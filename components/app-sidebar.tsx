@@ -179,7 +179,7 @@ export function AppSidebar() {
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="flex min-h-12 w-full min-w-0 items-center gap-3 rounded-xl p-2 transition-colors hover:bg-sidebar-accent">
+            <div className="flex min-h-12 w-full min-w-0 cursor-pointer items-center gap-3 rounded-xl p-2 transition-colors hover:bg-sidebar-accent">
               <Avatar className="h-9 w-9 shrink-0 border">
                 <AvatarFallback className="bg-primary text-primary-foreground">
                   A
@@ -197,7 +197,7 @@ export function AppSidebar() {
               </div>
 
               <ChevronDown className="h-4 w-4 text-muted-foreground group-data-[collapsible=icon]:hidden" />
-            </button>
+            </div>
           </DropdownMenuTrigger>
 
           <DropdownMenuContent

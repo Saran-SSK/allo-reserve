@@ -148,7 +148,9 @@ export async function PATCH(
         throw new Error('INVENTORY_NOT_FOUND')
       }
 
-      if (inventory.reservedStock > totalStock) {
+      const safeReservedStock = Math.max(0, inventory.reservedStock)
+
+      if (safeReservedStock > totalStock) {
         throw new Error('INSUFFICIENT_STOCK')
       }
 
@@ -183,6 +185,7 @@ export async function PATCH(
         data: {
           warehouseId: warehouse.id,
           totalStock,
+          reservedStock: safeReservedStock,
         },
       })
 
@@ -193,6 +196,8 @@ export async function PATCH(
       }
     }, { timeout: 10000 })
 
+    const reservedStock = Math.max(0, result.updatedInventory.reservedStock)
+
     return NextResponse.json({
       id: result.updatedProduct.id,
       name: result.updatedProduct.name,
@@ -202,9 +207,8 @@ export async function PATCH(
         warehouseId: result.updatedInventory.warehouseId,
         warehouseName: result.warehouse.name,
         totalStock: result.updatedInventory.totalStock,
-        reservedStock: result.updatedInventory.reservedStock,
-        availableStock:
-          result.updatedInventory.totalStock - result.updatedInventory.reservedStock,
+        reservedStock,
+        availableStock: result.updatedInventory.totalStock - reservedStock,
       },
     })
   } catch (error) {

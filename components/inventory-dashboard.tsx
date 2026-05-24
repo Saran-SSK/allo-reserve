@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { InventoryCard } from '@/components/inventory-card'
 import { ReservationPanel } from '@/components/reservation-panel'
 import { EditProductDialog } from '@/components/edit-product-dialog'
 
 import type {
+  DashboardStats,
   InventoryItem,
   Reservation,
 } from '@/lib/data'
@@ -17,19 +18,8 @@ interface InventoryDashboardProps {
   search: string
   setInventory: (inventory: InventoryItem[]) => void
   setReservations: (reservations: Reservation[]) => void
-}
-
-type ProductResponse = {
-  id: string
-  name: string
-  inventories: {
-    inventoryId: string
-    warehouseId: string
-    warehouseName: string
-    totalStock: number
-    reservedStock: number
-    availableStock: number
-  }[]
+  setStats: (stats: DashboardStats) => void
+  refreshKey: number
 }
 
 type ReservationResponse = {
@@ -43,10 +33,21 @@ type ReservationResponse = {
   createdAt: string
 }
 
+type DashboardResponse = {
+  stats: DashboardStats
+  inventory: InventoryItem[]
+  reservations: ReservationResponse[]
+}
+
+let cachedDashboardData: DashboardResponse | null = null
+let dashboardFetchPromise: Promise<DashboardResponse> | null = null
+
 export function InventoryDashboard({
   search,
   setInventory,
   setReservations,
+  setStats,
+  refreshKey,
 }: InventoryDashboardProps) {
   const [inventory, setInventoryState] = useState<InventoryItem[]>([])
   const [reservations, setReservationsState] = useState<Reservation[]>([])
@@ -54,21 +55,8 @@ export function InventoryDashboard({
   const [actionPending, setActionPending] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null)
-
-  const normalizeInventory = (data: ProductResponse[]) =>
-    data.flatMap((product) =>
-      product.inventories.map((inv) => ({
-        id: inv.inventoryId,
-        productId: product.id,
-        productName: product.name,
-        warehouseId: inv.warehouseId,
-        warehouseName: inv.warehouseName,
-        totalStock: inv.totalStock,
-        reservedStock: inv.reservedStock,
-        availableStock: inv.totalStock - inv.reservedStock,
-        lowStockThreshold: Math.max(1, Math.round(inv.totalStock * 0.1)),
-      }))
-    )
+  const isFetchingRef = useRef(false)
+  const fetchVersionRef = useRef(0)
 
   const normalizeReservations = (data: ReservationResponse[]) =>
     data
@@ -84,38 +72,85 @@ export function InventoryDashboard({
         createdAt: new Date(reservation.createdAt),
       }))
 
-  const updateInventoryState = (items: InventoryItem[]) => {
+  const buildStats = useCallback(
+    (items: InventoryItem[], activeReservations: Reservation[]) => ({
+      totalProducts: items.length,
+      activeReservations: activeReservations.length,
+      warehouses: new Set(items.map((item) => item.warehouseId)).size,
+      lowStockItems: items.filter(
+        (item) => item.availableStock <= item.lowStockThreshold
+      ).length,
+    }),
+    []
+  )
+
+  const updateDashboardState = useCallback((
+    items: InventoryItem[],
+    activeReservations: Reservation[],
+    stats?: DashboardStats
+  ) => {
     setInventoryState(items)
     setInventory(items)
-  }
+    setReservationsState(activeReservations)
+    setReservations(activeReservations)
+    setStats(stats ?? buildStats(items, activeReservations))
+  }, [buildStats, setInventory, setReservations, setStats])
 
-  const updateReservationsState = (items: Reservation[]) => {
-    setReservationsState(items)
-    setReservations(items)
-  }
-
-  const loadServerState = async () => {
-    const [inventoryResponse, reservationResponse] = await Promise.all([
-      fetch('/api/products'),
-      fetch('/api/reservations'),
-    ])
-
-    if (!inventoryResponse.ok || !reservationResponse.ok) {
-      const inventoryBody = await inventoryResponse.json().catch(() => null)
-      const reservationBody = await reservationResponse.json().catch(() => null)
-      console.error('Failed to load server data', {
-        inventoryBody,
-        reservationBody,
-      })
-      return
+  const fetchDashboardData = useCallback(async (force = false) => {
+    if (!force && cachedDashboardData) {
+      return cachedDashboardData
     }
 
-    const inventoryData = (await inventoryResponse.json()) as ProductResponse[]
-    const reservationData = (await reservationResponse.json()) as ReservationResponse[]
+    if (!force && dashboardFetchPromise) {
+      return dashboardFetchPromise
+    }
 
-    updateInventoryState(normalizeInventory(inventoryData))
-    updateReservationsState(normalizeReservations(reservationData))
-  }
+    dashboardFetchPromise = fetch('/api/dashboard')
+      .then(async (response) => {
+        const data = await response.json()
+
+        if (!response.ok) {
+          throw data
+        }
+
+        cachedDashboardData = data as DashboardResponse
+        return cachedDashboardData
+      })
+      .finally(() => {
+        dashboardFetchPromise = null
+      })
+
+    return dashboardFetchPromise
+  }, [])
+
+  const loadServerState = useCallback(async (force = false) => {
+    if (isFetchingRef.current && !force) return
+
+    isFetchingRef.current = true
+    const fetchVersion = ++fetchVersionRef.current
+
+    try {
+      const data = await fetchDashboardData(force)
+
+      if (fetchVersion !== fetchVersionRef.current) {
+        return
+      }
+
+      updateDashboardState(
+        data.inventory,
+        normalizeReservations(data.reservations),
+        data.stats
+      )
+    } catch (error) {
+      console.error('Failed to load dashboard data', error)
+      toast.error('Failed to load dashboard data')
+    } finally {
+      if (fetchVersion === fetchVersionRef.current) {
+        isFetchingRef.current = false
+        setLoading(false)
+      }
+    }
+  }, [fetchDashboardData, updateDashboardState])
 
   const expireReservations = async () => {
     try {
@@ -132,7 +167,7 @@ export function InventoryDashboard({
       const data = await response.json()
 
       if (typeof data.expiredCount === 'number' && data.expiredCount > 0) {
-        await loadServerState()
+        await loadServerState(true)
       }
     } catch (error) {
       console.error('Failed to expire reservations:', error)
@@ -140,17 +175,15 @@ export function InventoryDashboard({
   }
 
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        await expireReservations()
-        await loadServerState()
-      } finally {
-        setLoading(false)
-      }
-    }
+    loadServerState()
+  }, [loadServerState])
 
-    loadData()
-  }, [])
+  useEffect(() => {
+    if (refreshKey === 0) return
+
+    cachedDashboardData = null
+    loadServerState(true)
+  }, [loadServerState, refreshKey])
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -170,8 +203,11 @@ export function InventoryDashboard({
       current.id === item.id
         ? {
             ...current,
-            reservedStock: current.reservedStock + 1,
-            availableStock: current.availableStock - 1,
+            reservedStock: Math.max(0, current.reservedStock) + 1,
+            availableStock: Math.max(
+              0,
+              current.totalStock - (Math.max(0, current.reservedStock) + 1)
+            ),
           }
         : current
     )
@@ -189,8 +225,7 @@ export function InventoryDashboard({
 
     const optimisticReservations = [optimisticReservation, ...reservations]
 
-    updateInventoryState(updatedInventory)
-    updateReservationsState(optimisticReservations)
+    updateDashboardState(updatedInventory, optimisticReservations)
     setActionPending(true)
 
     try {
@@ -224,18 +259,18 @@ export function InventoryDashboard({
           : reservation
       )
 
-      updateReservationsState(nextReservations)
+      cachedDashboardData = null
+      updateDashboardState(updatedInventory, nextReservations)
       toast.success('Reservation created successfully')
     } catch (error) {
-      updateInventoryState(originalInventory)
-      updateReservationsState(originalReservations)
+      updateDashboardState(originalInventory, originalReservations)
       console.error('Reservation failed:', error)
       toast.error(
         (error && typeof error === 'object' && 'error' in error
           ? (error as any).error
           : 'Reservation failed') as string
       )
-      await loadServerState()
+      await loadServerState(true)
     } finally {
       setActionPending(false)
     }
@@ -253,8 +288,7 @@ export function InventoryDashboard({
       (reservation) => reservation.productId !== productId
     )
 
-    updateInventoryState(filteredInventory)
-    updateReservationsState(filteredReservations)
+    updateDashboardState(filteredInventory, filteredReservations)
     setActionPending(true)
 
     try {
@@ -268,17 +302,17 @@ export function InventoryDashboard({
         throw data
       }
 
+      cachedDashboardData = null
       toast.success('Product deleted successfully')
     } catch (error) {
-      updateInventoryState(originalInventory)
-      updateReservationsState(originalReservations)
+      updateDashboardState(originalInventory, originalReservations)
       console.error('Delete failed:', error)
       toast.error(
         (error && typeof error === 'object' && 'error' in error
           ? (error as any).error
           : 'Delete failed') as string
       )
-      await loadServerState()
+      await loadServerState(true)
     } finally {
       setActionPending(false)
     }
@@ -292,7 +326,7 @@ export function InventoryDashboard({
   const handleEditSaved = async () => {
     setActionPending(true)
     try {
-      await loadServerState()
+      await loadServerState(true)
     } finally {
       setActionPending(false)
       setEditOpen(false)
@@ -331,8 +365,7 @@ export function InventoryDashboard({
       }
     })
 
-    updateInventoryState(updatedInventory)
-    updateReservationsState(updatedReservations)
+    updateDashboardState(updatedInventory, updatedReservations)
     setActionPending(true)
 
     try {
@@ -346,17 +379,17 @@ export function InventoryDashboard({
         throw data
       }
 
+      cachedDashboardData = null
       toast.success('Reservation confirmed')
     } catch (error) {
-      updateInventoryState(originalInventory)
-      updateReservationsState(originalReservations)
+      updateDashboardState(originalInventory, originalReservations)
       console.error('Confirmation failed:', error)
       toast.error(
         (error && typeof error === 'object' && 'error' in error
           ? (error as any).error
           : 'Confirmation failed') as string
       )
-      await loadServerState()
+      await loadServerState(true)
     } finally {
       setActionPending(false)
     }
@@ -391,8 +424,7 @@ export function InventoryDashboard({
       }
     })
 
-    updateInventoryState(updatedInventory)
-    updateReservationsState(updatedReservations)
+    updateDashboardState(updatedInventory, updatedReservations)
     setActionPending(true)
 
     try {
@@ -406,17 +438,17 @@ export function InventoryDashboard({
         throw data
       }
 
+      cachedDashboardData = null
       toast.success('Reservation released')
     } catch (error) {
-      updateInventoryState(originalInventory)
-      updateReservationsState(originalReservations)
+      updateDashboardState(originalInventory, originalReservations)
       console.error('Release failed:', error)
       toast.error(
         (error && typeof error === 'object' && 'error' in error
           ? (error as any).error
           : 'Release failed') as string
       )
-      await loadServerState()
+      await loadServerState(true)
     } finally {
       setActionPending(false)
     }
@@ -440,16 +472,6 @@ export function InventoryDashboard({
     )
   }, [reservations, search])
 
-  if (loading) {
-    return (
-      <div className="space-y-4">
-        <div className="h-32 animate-pulse rounded-2xl bg-muted" />
-        <div className="h-32 animate-pulse rounded-2xl bg-muted" />
-        <div className="h-32 animate-pulse rounded-2xl bg-muted" />
-      </div>
-    )
-  }
-
   return (
     <div className="grid min-w-0 grid-cols-1 gap-4 lg:gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="min-w-0 space-y-4">
@@ -466,15 +488,22 @@ export function InventoryDashboard({
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
-          {filteredInventory.map((item) => (
-            <InventoryCard
-              key={item.id}
-              item={item}
-              onReserve={handleReserve}
-              onEdit={handleEdit}
-              onDelete={handleDelete}
-            />
-          ))}
+          {loading
+            ? Array.from({ length: 6 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-64 animate-pulse rounded-2xl bg-muted"
+                />
+              ))
+            : filteredInventory.map((item) => (
+                <InventoryCard
+                  key={item.id}
+                  item={item}
+                  onReserve={handleReserve}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                />
+              ))}
         </div>
 
         <EditProductDialog

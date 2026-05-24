@@ -18,14 +18,18 @@ export async function GET() {
     const responsePayload = (products as any[]).map((product: any) => ({
       id: product.id,
       name: product.name,
-      inventories: (product.inventory as any[]).map((inventory: any) => ({
-        inventoryId: inventory.id,
-        warehouseId: inventory.warehouseId,
-        warehouseName: inventory.warehouse.name,
-        totalStock: inventory.totalStock,
-        reservedStock: inventory.reservedStock,
-        availableStock: inventory.totalStock - inventory.reservedStock,
-      })),
+      inventories: (product.inventory as any[]).map((inventory: any) => {
+        const reservedStock = Math.max(0, inventory.reservedStock)
+
+        return {
+          inventoryId: inventory.id,
+          warehouseId: inventory.warehouseId,
+          warehouseName: inventory.warehouse.name,
+          totalStock: inventory.totalStock,
+          reservedStock,
+          availableStock: inventory.totalStock - reservedStock,
+        }
+      }),
     }))
 
     return NextResponse.json(responsePayload)

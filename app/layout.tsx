@@ -19,7 +19,6 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: 'AlloReserve',
   description:'Allo Inventory Management Platform',
-  generator: 'v0.app',
 
   icons: {
     icon: [

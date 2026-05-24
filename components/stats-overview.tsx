@@ -58,7 +58,7 @@ export function StatsOverview({
 }: StatsOverviewProps) {
   const stats = [
     {
-      title: 'Total Products',
+      title: 'Inventory Records',
       value: totalProducts,
       icon: <Package className="h-5 w-5 text-primary" />,
     },

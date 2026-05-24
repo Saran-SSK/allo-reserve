@@ -6,11 +6,6 @@ const p = prisma as any
 export async function GET() {
   try {
     const reservations = await p.reservation.findMany({
-      where: {
-        status: {
-          in: ['PENDING', 'CONFIRMED'],
-        },
-      },
       include: {
         inventory: {
           include: {
@@ -80,7 +75,8 @@ export async function POST(request: Request) {
         return { inventoryNotFound: true }
       }
 
-      const availableStock = inventory.totalStock - inventory.reservedStock
+      const safeReservedStock = Math.max(0, inventory.reservedStock)
+      const availableStock = inventory.totalStock - safeReservedStock
 
       if (availableStock < quantity) {
         return { insufficientStock: true }
@@ -89,9 +85,7 @@ export async function POST(request: Request) {
       const updatedInventory = await tx.inventory.update({
         where: { id: inventoryId },
         data: {
-          reservedStock: {
-            increment: quantity,
-          },
+          reservedStock: safeReservedStock + quantity,
         },
       })
 

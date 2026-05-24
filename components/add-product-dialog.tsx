@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
 interface AddProductDialogProps {
-  onProductAdded?: () => void
+  onProductAdded?: () => void | Promise<void>
 }
 
 export function AddProductDialog({
@@ -58,7 +58,7 @@ export function AddProductDialog({
       setWarehouseName('')
       setStock(0)
 
-      onProductAdded?.()
+      await onProductAdded?.()
 
       toast.success('Product added successfully')
     } catch (error) {

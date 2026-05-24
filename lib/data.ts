@@ -23,6 +23,13 @@ export type Reservation = {
   createdAt: Date
 }
 
+export type DashboardStats = {
+  totalProducts: number
+  activeReservations: number
+  warehouses: number
+  lowStockItems: number
+}
+
 export const mockInventory: InventoryItem[] = [
   {
     id: 'inv-001',

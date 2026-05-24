@@ -19,19 +19,35 @@ export async function POST(
     }
 
     const result = await p.$transaction(async (tx: any) => {
-      const reservation = await tx.reservation.findUnique({
-        where: { id: reservationId },
-      })
+      const reservations = await tx.$queryRaw<
+        {
+          id: string
+          inventoryId: string
+          quantity: number
+          status: string
+          expiresAt: Date
+        }[]
+      >`
+        SELECT "id", "inventoryId", "quantity", "status", "expiresAt"
+        FROM "Reservation"
+        WHERE "id" = ${reservationId}
+        FOR UPDATE
+      `
+
+      const reservation = reservations[0]
 
       if (!reservation) {
         return { error: 'Reservation not found.', status: 404 }
       }
 
-      if (reservation.status === 'RELEASED') {
-        return { error: 'Reservation already released.', status: 400 }
+      if (reservation.status !== 'PENDING') {
+        return { error: `Reservation already ${reservation.status}.`, status: 400 }
       }
 
-      // Lock inventory for update
+      if (reservation.expiresAt <= new Date()) {
+        return { error: 'Reservation has expired.', status: 410 }
+      }
+
       const inventories = await tx.$queryRaw<
         { id: string; totalStock: number; reservedStock: number }[]
       >`
@@ -47,24 +63,15 @@ export async function POST(
         return { error: 'Associated inventory not found.', status: 404 }
       }
 
-      // If pending: release reserved stock back to available (decrement reserved)
-      // If confirmed: the reservation already consumed totalStock on confirm,
-      // so releasing a confirmed reservation should restore totalStock.
-      if (reservation.status === 'PENDING') {
-        const updatedReservedStock = Math.max(0, inventory.reservedStock - reservation.quantity)
+      const updatedReservedStock = Math.max(
+        0,
+        inventory.reservedStock - reservation.quantity
+      )
 
-        await tx.inventory.update({
-          where: { id: inventory.id },
-          data: { reservedStock: updatedReservedStock },
-        })
-      } else if (reservation.status === 'CONFIRMED') {
-        const updatedTotalStock = inventory.totalStock + reservation.quantity
-
-        await tx.inventory.update({
-          where: { id: inventory.id },
-          data: { totalStock: updatedTotalStock },
-        })
-      }
+      await tx.inventory.update({
+        where: { id: inventory.id },
+        data: { reservedStock: updatedReservedStock },
+      })
 
       const updatedReservation = await tx.reservation.update({
         where: { id: reservationId },

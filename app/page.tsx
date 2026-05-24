@@ -12,7 +12,14 @@ import { DashboardHeader } from '@/components/dashboard-header'
 import { StatsOverview } from '@/components/stats-overview'
 import { InventoryDashboard } from '@/components/inventory-dashboard'
 import { ActionButtons } from '@/components/action-buttons'
-import type { InventoryItem, Reservation } from '@/lib/data'
+import type { DashboardStats, InventoryItem, Reservation } from '@/lib/data'
+
+const emptyStats: DashboardStats = {
+  totalProducts: 0,
+  activeReservations: 0,
+  warehouses: 0,
+  lowStockItems: 0,
+}
 
 export default function DashboardPage() {
   const [search, setSearch] = useState('')
@@ -20,8 +27,14 @@ export default function DashboardPage() {
   const [inventory, setInventory] =
     useState<InventoryItem[]>([])
 
-  const [reservations, setReservations] =
+  const [, setReservations] =
     useState<Reservation[]>([])
+
+  const [stats, setStats] =
+    useState<DashboardStats>(emptyStats)
+
+  const [dashboardRefreshKey, setDashboardRefreshKey] =
+    useState(0)
 
   return (
     <SidebarProvider>
@@ -48,30 +61,26 @@ export default function DashboardPage() {
                 </p>
               </div>
 
-              <ActionButtons />
+              <ActionButtons
+                onProductAdded={() => {
+                  setDashboardRefreshKey((key) => key + 1)
+                }}
+              />
             </div>
 
             {/* Stats Overview */}
             <StatsOverview
               totalProducts={
-                inventory.length
+                stats.totalProducts
               }
               activeReservations={
-                reservations.length
+                stats.activeReservations
               }
               warehouses={
-                new Set(
-                  inventory.map(
-                    (item) =>
-                      item.warehouseName
-                  )
-                ).size
+                stats.warehouses
               }
               lowStockItems={
-                inventory.filter(
-                  (item) =>
-                    item.availableStock <= 5
-                ).length
+                stats.lowStockItems
               }
             />
 
@@ -82,6 +91,8 @@ export default function DashboardPage() {
               setReservations={
                 setReservations
               }
+              setStats={setStats}
+              refreshKey={dashboardRefreshKey}
             />
           </div>
         </main>
